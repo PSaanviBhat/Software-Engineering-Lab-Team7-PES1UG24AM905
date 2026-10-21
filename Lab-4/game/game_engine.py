@@ -12,12 +12,20 @@ class GameEngine:
         self.player = Puller(90, height // 2, (50, 120, 220), "PLAYER (A/D)")
         self.computer = Puller(width - 90, height // 2, (220, 80, 50), "COMPUTER")
 
+        # Input tracking
         self.last_key = None
         self.winner = None
         self.game_state = "PLAYING"
 
-        self.computer_pull_cooldown = 180
+        # AI Dynamic Panic Surge configuration
+        self.base_ai_cooldown = 180
+        self.min_ai_cooldown = 70  # Fastest cooldown when in max panic
+        self.base_ai_strength = 1.0
+        self.max_ai_strength = 2.0  # Hardest pull strength when in max panic
+        self.current_ai_cooldown = self.base_ai_cooldown
         self.last_computer_pull = pygame.time.get_ticks()
+
+        self.center_start_x = width // 2
 
         self.font_big = pygame.font.SysFont(None, 48)
         self.font_small = pygame.font.SysFont(None, 26)
@@ -35,15 +43,34 @@ class GameEngine:
                 if event.key != self.last_key:
                     self.rope.pull_left(1.0)
                     self.last_key = event.key
-        
+
     def update(self):
         if self.game_state != "PLAYING":
             return
 
         now = pygame.time.get_ticks()
-        if now - self.last_computer_pull >= self.computer_pull_cooldown:
-            computer_variance = random.uniform(0.7, 1.2)
-            self.rope.pull_right(computer_variance)
+
+        # Dynamic AI Panic Surge calculation
+        total_distance_to_lose = self.center_start_x - self.rope.left_win_x
+        current_distance_to_lose = self.rope.marker_x - self.rope.left_win_x
+
+        # Panic factor: 0.0 (center/safe) to 1.0 (at player's winning threshold)
+        if total_distance_to_lose > 0:
+            panic_factor = 1.0 - (current_distance_to_lose / total_distance_to_lose)
+            panic_factor = max(0.0, min(1.0, panic_factor))
+        else:
+            panic_factor = 0.0
+
+        # Scale cooldown down and strength up as panic increases
+        cooldown_range = self.base_ai_cooldown - self.min_ai_cooldown
+        self.current_ai_cooldown = self.base_ai_cooldown - (cooldown_range * panic_factor)
+
+        if now - self.last_computer_pull >= self.current_ai_cooldown:
+            strength_range = self.max_ai_strength - self.base_ai_strength
+            current_strength = self.base_ai_strength + (strength_range * panic_factor)
+
+            computer_variance = random.uniform(current_strength - 0.3, current_strength + 0.2)
+            self.rope.pull_right(max(0.1, computer_variance))
             self.last_computer_pull = now
 
         result = self.rope.check_winner()
@@ -56,6 +83,7 @@ class GameEngine:
         self.last_key = None
         self.winner = None
         self.game_state = "PLAYING"
+        self.current_ai_cooldown = self.base_ai_cooldown
         self.last_computer_pull = pygame.time.get_ticks()
 
     def render(self, screen):
