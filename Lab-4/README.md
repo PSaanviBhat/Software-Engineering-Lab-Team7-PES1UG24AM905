@@ -86,6 +86,6 @@ tug_of_war/
 
 Submission is only the following three things:
 
-- [] A 10-second video of gameplay **before** your changes, showing the bug/broken behavior
-- [] A 10-second video of gameplay **after** your changes, showing the bug fixed and the new features working
-- [] The Chat/LLM used page link, with the complete chat history
+- [x] [Before Video (Bug/Deadlock)](videos/before.mp4) - 10-second gameplay video showing the broken alternating input deadlock
+- [x] [After Video (Fixed & Features)](videos/after.mp4) - 10-second gameplay video showing the bug fixed and new features working
+- [x] [Gemini Chat History Public Link](https://share.gemini.google/euhUqseD1dgD) (Exported PDF: [PES1UG24AM905_Lab4_Chat_History.pdf](PES1UG24AM905_Lab4_Chat_History.pdf))
