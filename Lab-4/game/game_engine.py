@@ -9,13 +9,18 @@ class GameEngine:
         self.width = width
         self.height = height
         self.rope = Rope(width, height)
-        self.player = Puller(90, height // 2, (50, 120, 220), "PLAYER (A/D)")
-        self.computer = Puller(width - 90, height // 2, (220, 80, 50), "COMPUTER")
+        self.player = Puller(90, height // 2, (50, 120, 220), "PLAYER (A/D)", face_dir=-1)
+        self.computer = Puller(width - 90, height // 2, (220, 80, 50), "COMPUTER", face_dir=1)
 
         # Input tracking
         self.last_key = None
         self.winner = None
         self.game_state = "PLAYING"
+
+        # Tension and momentum animation tracking
+        self.tension = 0.0
+        self.player_momentum = 0.0
+        self.computer_momentum = 0.0
 
         # AI Dynamic Panic Surge configuration
         self.base_ai_cooldown = 180
@@ -43,6 +48,8 @@ class GameEngine:
                 if event.key != self.last_key:
                     self.rope.pull_left(1.0)
                     self.last_key = event.key
+                    self.player_momentum = min(1.0, self.player_momentum + 0.35)
+                    self.tension = min(1.0, self.tension + 0.2)
 
     def update(self):
         if self.game_state != "PLAYING":
@@ -72,6 +79,13 @@ class GameEngine:
             computer_variance = random.uniform(current_strength - 0.3, current_strength + 0.2)
             self.rope.pull_right(max(0.1, computer_variance))
             self.last_computer_pull = now
+            self.computer_momentum = min(1.0, self.computer_momentum + 0.35)
+            self.tension = min(1.0, self.tension + 0.2)
+
+        # Decay tension and momentum over time
+        self.tension = max(0.0, self.tension - 0.015)
+        self.player_momentum = max(0.0, self.player_momentum - 0.02)
+        self.computer_momentum = max(0.0, self.computer_momentum - 0.02)
 
         result = self.rope.check_winner()
         if result:
@@ -83,6 +97,9 @@ class GameEngine:
         self.last_key = None
         self.winner = None
         self.game_state = "PLAYING"
+        self.tension = 0.0
+        self.player_momentum = 0.0
+        self.computer_momentum = 0.0
         self.current_ai_cooldown = self.base_ai_cooldown
         self.last_computer_pull = pygame.time.get_ticks()
 
@@ -92,9 +109,9 @@ class GameEngine:
         mud_rect = pygame.Rect(self.width // 2 - 120, self.height // 2 - 80, 240, 160)
         pygame.draw.rect(screen, (45, 38, 30), mud_rect, border_radius=12)
 
-        self.rope.render(screen)
-        self.player.render(screen)
-        self.computer.render(screen)
+        self.rope.render(screen, tension=self.tension)
+        self.player.render(screen, lean_intensity=self.player_momentum)
+        self.computer.render(screen, lean_intensity=self.computer_momentum)
 
         inst_surf = self.font_small.render(
             "Alternate [A] and [D] keys rapidly to pull!", True, (210, 210, 210)
