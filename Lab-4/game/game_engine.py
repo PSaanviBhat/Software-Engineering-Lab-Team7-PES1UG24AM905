@@ -12,15 +12,21 @@ class GameEngine:
         self.player = Puller(90, height // 2, (50, 120, 220), "PLAYER (A/D)", face_dir=-1)
         self.computer = Puller(width - 90, height // 2, (220, 80, 50), "COMPUTER", face_dir=1)
 
-        # Input tracking
+        # Game State
         self.last_key = None
         self.winner = None
         self.game_state = "PLAYING"
 
-        # Tension and momentum animation tracking
-        self.tension = 0.0
-        self.player_momentum = 0.0
-        self.computer_momentum = 0.0
+        # Match Timer & Sudden Death
+        self.match_start_time = pygame.time.get_ticks()
+        self.is_sudden_death = False
+        self.sudden_death_threshold = 45000  # 45 seconds in milliseconds
+
+        # Fonts
+        self.font_big = pygame.font.SysFont(None, 48)
+        self.font_timer = pygame.font.SysFont(None, 36)
+        self.font_banner = pygame.font.SysFont(None, 42)
+        self.font_small = pygame.font.SysFont(None, 24)
 
         # AI Dynamic Panic Surge configuration
         self.base_ai_cooldown = 180
@@ -29,11 +35,29 @@ class GameEngine:
         self.max_ai_strength = 2.0  # Hardest pull strength when in max panic
         self.current_ai_cooldown = self.base_ai_cooldown
         self.last_computer_pull = pygame.time.get_ticks()
-
         self.center_start_x = width // 2
 
-        self.font_big = pygame.font.SysFont(None, 48)
-        self.font_small = pygame.font.SysFont(None, 26)
+        # Visual animation feedback
+        self.tension = 0.0
+        self.player_momentum = 0.0
+        self.computer_momentum = 0.0
+
+    def reset(self):
+        self.rope.reset()
+        self.last_key = None
+        self.winner = None
+        self.game_state = "PLAYING"
+
+        # Reset timer & Sudden Death
+        self.match_start_time = pygame.time.get_ticks()
+        self.is_sudden_death = False
+
+        # Reset AI & animations
+        self.current_ai_cooldown = self.base_ai_cooldown
+        self.last_computer_pull = pygame.time.get_ticks()
+        self.tension = 0.0
+        self.player_momentum = 0.0
+        self.computer_momentum = 0.0
 
     def handle_event(self, event):
         if self.game_state != "PLAYING":
@@ -46,7 +70,8 @@ class GameEngine:
             if event.key in (pygame.K_a, pygame.K_d):
                 # If the key is the opposite of the last successful press, pull!
                 if event.key != self.last_key:
-                    self.rope.pull_left(1.0)
+                    pull_power = 2.0 if self.is_sudden_death else 1.0
+                    self.rope.pull_left(pull_power)
                     self.last_key = event.key
                     self.player_momentum = min(1.0, self.player_momentum + 0.35)
                     self.tension = min(1.0, self.tension + 0.2)
@@ -56,6 +81,11 @@ class GameEngine:
             return
 
         now = pygame.time.get_ticks()
+        elapsed = now - self.match_start_time
+
+        # Trigger Sudden Death after 45 seconds
+        if elapsed >= self.sudden_death_threshold and not self.is_sudden_death:
+            self.is_sudden_death = True
 
         # Dynamic AI Panic Surge calculation
         total_distance_to_lose = self.center_start_x - self.rope.left_win_x
@@ -72,9 +102,14 @@ class GameEngine:
         cooldown_range = self.base_ai_cooldown - self.min_ai_cooldown
         self.current_ai_cooldown = self.base_ai_cooldown - (cooldown_range * panic_factor)
 
+        # Computer pull execution
         if now - self.last_computer_pull >= self.current_ai_cooldown:
             strength_range = self.max_ai_strength - self.base_ai_strength
             current_strength = self.base_ai_strength + (strength_range * panic_factor)
+
+            # Double pull strength in Sudden Death
+            if self.is_sudden_death:
+                current_strength *= 2.0
 
             computer_variance = random.uniform(current_strength - 0.3, current_strength + 0.2)
             self.rope.pull_right(max(0.1, computer_variance))
@@ -82,7 +117,7 @@ class GameEngine:
             self.computer_momentum = min(1.0, self.computer_momentum + 0.35)
             self.tension = min(1.0, self.tension + 0.2)
 
-        # Decay tension and momentum over time
+        # Decay animation tension and momentum
         self.tension = max(0.0, self.tension - 0.015)
         self.player_momentum = max(0.0, self.player_momentum - 0.02)
         self.computer_momentum = max(0.0, self.computer_momentum - 0.02)
@@ -92,33 +127,42 @@ class GameEngine:
             self.winner = result
             self.game_state = "GAME_OVER"
 
-    def reset(self):
-        self.rope.reset()
-        self.last_key = None
-        self.winner = None
-        self.game_state = "PLAYING"
-        self.tension = 0.0
-        self.player_momentum = 0.0
-        self.computer_momentum = 0.0
-        self.current_ai_cooldown = self.base_ai_cooldown
-        self.last_computer_pull = pygame.time.get_ticks()
-
     def render(self, screen):
         screen.fill((30, 32, 36))
 
+        # Mud center pit
         mud_rect = pygame.Rect(self.width // 2 - 120, self.height // 2 - 80, 240, 160)
         pygame.draw.rect(screen, (45, 38, 30), mud_rect, border_radius=12)
 
+        # Render entities with animation parameters
         self.rope.render(screen, tension=self.tension)
         self.player.render(screen, lean_intensity=self.player_momentum)
         self.computer.render(screen, lean_intensity=self.computer_momentum)
 
-        inst_surf = self.font_small.render(
-            "Alternate [A] and [D] keys rapidly to pull!", True, (210, 210, 210)
-        )
-        screen.blit(inst_surf, (self.width // 2 - inst_surf.get_width() // 2, 40))
+        # Render timer & UI
+        if self.game_state == "PLAYING":
+            now = pygame.time.get_ticks()
+            elapsed_sec = (now - self.match_start_time) // 1000
 
-        if self.game_state == "GAME_OVER":
+            # Match timer
+            timer_surf = self.font_timer.render(f"Match Time: {elapsed_sec}s", True, (240, 240, 240))
+            screen.blit(timer_surf, (self.width // 2 - timer_surf.get_width() // 2, 16))
+
+            # Sudden Death warning banner
+            if self.is_sudden_death:
+                # Flashing banner
+                if (now // 250) % 2 == 0:
+                    banner_surf = self.font_banner.render(
+                        "SUDDEN DEATH! (2X PULL POWER)", True, (255, 60, 60)
+                    )
+                    screen.blit(banner_surf, (self.width // 2 - banner_surf.get_width() // 2, 54))
+            else:
+                inst_surf = self.font_small.render(
+                    "Alternate [A] and [D] keys rapidly to pull!", True, (180, 180, 180)
+                )
+                screen.blit(inst_surf, (self.width // 2 - inst_surf.get_width() // 2, 54))
+
+        elif self.game_state == "GAME_OVER":
             overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
             screen.blit(overlay, (0, 0))
@@ -131,7 +175,7 @@ class GameEngine:
                 (self.width // 2 - text_surf.get_width() // 2, self.height // 2 - 50)
             )
 
-            restart_surf = self.font_small.render(
+            restart_surf = self.font_timer.render(
                 "Press [R] to Play Again", True, (240, 240, 240)
             )
             screen.blit(
