@@ -1,11 +1,6 @@
-import pytest
-from course_registration import can_register, waitlist_position, late_fee
+"""Comprehensive test suite for course_registration.py.
 
-#Example test cases:
-def test_registered():
-    assert can_register("regular", 20, 4, True) == "registered"
+Includes all code coverage and branch coverage test cases.
+"""
 
-def test_seat_available():
-    assert waitlist_position(30, 40, 0) == 0
-
-#Write the rest of the test cases so that the code is 90- 100% covered.
+from BranchCoverageTest_course_registration import *
