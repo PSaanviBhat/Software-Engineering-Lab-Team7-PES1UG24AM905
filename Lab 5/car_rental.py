@@ -1,11 +1,17 @@
+"""Car rental booking and management system.
+
+Provides vehicle fleet tracking, customer database registration,
+booking calculations, cryptographic operations, receipt generation,
+and promo rule evaluation.
+"""
+
+from datetime import datetime
 import hashlib
-import json
 import os
 import re
 import secrets
 import sqlite3
 import tempfile
-from datetime import datetime
 
 # Global rental state
 fleet = {}
@@ -16,33 +22,109 @@ conn.execute("CREATE TABLE customers (name TEXT, licence TEXT, phone TEXT)")
 DEFAULT_ADMIN_TOKEN = os.environ.get("ADMIN_AUTH_TOKEN", "admin@rent")
 
 
-def addCar(plate, model="Unknown", daily_rate=0, features=[]):
+def add_car(plate, model="Unknown", daily_rate=0, features=None):
+    """Add a vehicle to the rental fleet.
+
+    Args:
+        plate (str): Registration license plate number.
+        model (str): Make and model of the vehicle.
+        daily_rate (int): Daily rental rate in INR (must be non-negative).
+        features (list, optional): List of vehicle feature tags.
+
+    Returns:
+        dict: The registered vehicle dictionary, or None if plate is empty.
+    """
     if not plate:
-        return
-    fleet[plate] = {"model": model, "rate": daily_rate, "available": True, "features": features}
+        return None
+    features_list = list(features) if features is not None else []
+    rate = max(0, daily_rate)
+    fleet[plate] = {
+        "model": model,
+        "rate": rate,
+        "available": True,
+        "features": features_list,
+    }
     return fleet[plate]
 
 
-def registerCustomer(name, licence, phone):
-    conn.execute("INSERT INTO customers VALUES (?, ?, ?)", (name, licence, phone))
+def register_customer(name, licence, phone):
+    """Register a new customer using parameterized SQL insert.
+
+    Args:
+        name (str): Customer full name.
+        licence (str): Driving license identifier.
+        phone (str): Contact phone number.
+    """
+    conn.execute(
+        "INSERT INTO customers VALUES (?, ?, ?)", (name, licence, phone)
+    )
 
 
-def findCustomer(name):
+def find_customer(name):
+    """Query customer records by name using parameterized SQL select.
+
+    Args:
+        name (str): Name string to search for.
+
+    Returns:
+        list: Matching database rows.
+    """
     query = "SELECT * FROM customers WHERE name = ?"
     return conn.execute(query, (name,)).fetchall()
 
 
-def rentCar(plate, customer, start, end):
-    if len(findCustomer(customer)) == 0:
+def rent_car(plate, customer, start, end):
+    """Create a new car booking and update fleet availability.
+
+    Args:
+        plate (str): Vehicle license plate.
+        customer (str): Name of customer.
+        start (str): Start date formatted as YYYY-MM-DD.
+        end (str): End date formatted as YYYY-MM-DD.
+
+    Returns:
+        int: Total cost for the rental, or None if booking cannot be completed.
+
+    Raises:
+        ValueError: If customer is not registered.
+    """
+    if not find_customer(customer):
         raise ValueError("Customer not registered")
-    days = (datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")).days
+    if plate not in fleet or not fleet[plate]["available"]:
+        return None
+    start_date = datetime.strptime(start, "%Y-%m-%d")
+    end_date = datetime.strptime(end, "%Y-%m-%d")
+    days = (end_date - start_date).days
+    if days <= 0:
+        return None
+
     cost = days * fleet[plate]["rate"]
-    bookings.append({"code": bookingCode(), "plate": plate, "customer": customer, "days": days, "cost": cost})
+    fleet[plate]["available"] = False
+    booking = {
+        "code": booking_code(),
+        "plate": plate,
+        "customer": customer,
+        "days": days,
+        "cost": cost,
+    }
+    bookings.append(booking)
     return cost
 
 
-def returnCar(plate, km_driven):
+def return_car(plate, km_driven):
+    """Return a rented vehicle to the fleet and calculate extra km fees.
+
+    Args:
+        plate (str): License plate of returning vehicle.
+        km_driven (int): Kilometres driven during the trip.
+
+    Returns:
+        int: Extra distance charge in INR (0 if within allowance, None if
+        plate is unknown).
+    """
     try:
+        if plate not in fleet:
+            return None
         fleet[plate]["available"] = True
         if km_driven > 300:
             return (km_driven - 300) * 5
@@ -51,16 +133,37 @@ def returnCar(plate, km_driven):
         return None
 
 
-def bookingCode():
-    return "BK-" + str(secrets.randbelow(90000) + 10000)
+def booking_code():
+    """Generate a cryptographically secure random booking code.
+
+    Returns:
+        str: Booking reference identifier prefixed with 'BK-'.
+    """
+    return f"BK-{secrets.randbelow(90000) + 10000}"
 
 
-def licenceHash(licence):
-    return hashlib.sha256(licence.encode()).hexdigest()
+def licence_hash(licence):
+    """Compute secure SHA-256 digest of driving license for privacy.
+
+    Args:
+        licence (str): Driving license identifier string.
+
+    Returns:
+        str: Hexadecimal SHA-256 hash string.
+    """
+    return hashlib.sha256(licence.encode("utf-8")).hexdigest()
 
 
-def applyPromo(rule, amount):
-    # Safely evaluate promo rules without exec()
+def apply_promo(rule, amount):
+    """Safely apply discount promo rules without arbitrary code execution.
+
+    Args:
+        rule (str): Staff rule expression (e.g. 'amount = amount * 0.9').
+        amount (float): Original cost.
+
+    Returns:
+        float: Discounted price.
+    """
     rule_clean = rule.strip()
     match_mult = re.search(r"amount\s*\*\s*([0-9.]+)", rule_clean)
     if match_mult:
@@ -70,63 +173,101 @@ def applyPromo(rule, amount):
     if match_sub:
         discount = float(match_sub.group(1))
         return max(0.0, amount - discount)
-    return amount
+    return float(amount)
 
 
-def isValidPlate(plate):
-    if re.match(r"^[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}$", plate):
-        return True
-    else:
-        return False
+def is_valid_plate(plate):
+    """Validate Indian motor vehicle registration plate format.
+
+    Args:
+        plate (str): License plate to validate.
+
+    Returns:
+        bool: True if plate conforms to registration standards, else False.
+    """
+    return bool(re.match(r"^[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}$", plate))
 
 
-def writeReceipt(booking):
+def write_receipt(booking):
+    """Generate a booking receipt file with restricted owner permissions.
+
+    Args:
+        booking (dict): Booking record dictionary.
+
+    Returns:
+        str: File system path of the created receipt.
+    """
     with tempfile.NamedTemporaryFile(
         mode="w", delete=False, suffix=".txt", encoding="utf-8"
     ) as temp_file:
         path = temp_file.name
         temp_file.write(
-            "Booking %s: %s for %d days = Rs.%d\n"
-            % (booking["code"], booking["plate"], booking["days"], booking["cost"])
+            f"Booking {booking['code']}: {booking['plate']} for "
+            f"{booking['days']} days = Rs.{booking['cost']}\n"
         )
     os.chmod(path, 0o600)
     return path
 
 
-def adminLogin(user, token=None):
+def admin_login(user, token=None):
+    """Authenticate administrator session with secure token verification.
+
+    Args:
+        user (str): Username to verify.
+        token (str, optional): Admin access token.
+
+    Returns:
+        bool: True if authenticated, False otherwise.
+    """
     expected_user = os.environ.get("ADMIN_USER", "admin")
     active_token = token if token is not None else DEFAULT_ADMIN_TOKEN
-    if user == expected_user and active_token == DEFAULT_ADMIN_TOKEN:
-        return True
-    return False
+    return user == expected_user and active_token == DEFAULT_ADMIN_TOKEN
 
 
-def availableCars():
-    result = []
-    for p in fleet:
-        if fleet[p]["available"] == True:
-            result.append(p)
-    return result
+def available_cars():
+    """Retrieve list of vehicle plates currently available for rent.
+
+    Returns:
+        list: Available vehicle registration plates.
+    """
+    return [plate for plate, car in fleet.items() if car.get("available")]
+
+
+# Backward compatibility aliases
+addCar = add_car  # pylint: disable=invalid-name
+registerCustomer = register_customer  # pylint: disable=invalid-name
+findCustomer = find_customer  # pylint: disable=invalid-name
+rentCar = rent_car  # pylint: disable=invalid-name
+returnCar = return_car  # pylint: disable=invalid-name
+bookingCode = booking_code  # pylint: disable=invalid-name
+licenceHash = licence_hash  # pylint: disable=invalid-name
+applyPromo = apply_promo  # pylint: disable=invalid-name
+isValidPlate = is_valid_plate  # pylint: disable=invalid-name
+writeReceipt = write_receipt  # pylint: disable=invalid-name
+adminLogin = admin_login  # pylint: disable=invalid-name
+availableCars = available_cars  # pylint: disable=invalid-name
 
 
 def main():
-    addCar("KA01AB1234", "Swift", 1500)
-    addCar("KA02CD5678", "Innova", 3000)
-    addCar("KA03EF9999", "Nexon", -500)
-    registerCustomer("Ravi", "DL-0420110012345", "9845012345")
-    registerCustomer("Meera", "DL-0420110099999", "9845099999")
-    print("Rent Swift:", rentCar("KA01AB1234", "Ravi", "2026-11-01", "2026-11-04"))
-    print("Rent Swift again:", rentCar("KA01AB1234", "Ravi", "2026-11-02", "2026-11-03"))
-    print("Rent Innova:", rentCar("KA02CD5678", "Ravi", "2026-11-10", "2026-11-07"))
-    print("Lookup injection:", findCustomer("x' OR '1'='1"))
-    print("Extra km charge:", returnCar("KA01AB1234", 420))
-    print("Return unknown car:", returnCar("XX00XX0000", 50))
-    print("Promo price:", applyPromo("amount = amount * 0.9", 4500))
-    print("Plate valid?", isValidPlate("KA01AB1234"))
-    print("Licence hash:", licenceHash("DL-0420110012345"))
-    print("Admin:", adminLogin("admin"))
-    print("Available:", availableCars())
-    print("Receipt saved to:", writeReceipt(bookings[0]))
+    """Run demonstration scenario and display operations output."""
+    add_car("KA01AB1234", "Swift", 1500)
+    add_car("KA02CD5678", "Innova", 3000)
+    add_car("KA03EF9999", "Nexon", -500)
+    register_customer("Ravi", "DL-0420110012345", "9845012345")
+    register_customer("Meera", "DL-0420110099999", "9845099999")
+    print("Rent Swift:", rent_car("KA01AB1234", "Ravi", "2026-11-01", "2026-11-04"))
+    print("Rent Swift again:", rent_car("KA01AB1234", "Ravi", "2026-11-02", "2026-11-03"))
+    print("Rent Innova:", rent_car("KA02CD5678", "Ravi", "2026-11-10", "2026-11-07"))
+    print("Lookup injection:", find_customer("x' OR '1'='1"))
+    print("Extra km charge:", return_car("KA01AB1234", 420))
+    print("Return unknown car:", return_car("XX00XX0000", 50))
+    print("Promo price:", apply_promo("amount = amount * 0.9", 4500))
+    print("Plate valid?", is_valid_plate("KA01AB1234"))
+    print("Licence hash:", licence_hash("DL-0420110012345"))
+    print("Admin:", admin_login("admin"))
+    print("Available:", available_cars())
+    print("Receipt saved to:", write_receipt(bookings[0]))
 
 
-main()
+if __name__ == "__main__":
+    main()
